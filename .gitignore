@@ -34,7 +34,6 @@ desktop.ini
 
 # Project specific
 models/*.pth
-gfpgan/weights/
 *.log
 *.tmp
 
