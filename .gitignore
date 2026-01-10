@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+env/
+venv/
+env39/
+env39_new/
+ENV/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Inno Setup
+installer_output/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific
+models/*.pth
+*.log
+*.tmp
+
+# Backups
+backup/
+*.zip
+*.bak
+
+# Output
+upscaled/
+output/
