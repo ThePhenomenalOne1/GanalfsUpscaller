@@ -114,7 +114,12 @@ upscale_image(
 ```
 
 ## Credits
+
+**Created by**: Amir Khalid
+
+This mess was lovingly put together with:
 - Real-ESRGAN: https://github.com/xinntao/Real-ESRGAN
 - GFPGAN: https://github.com/TencentARC/GFPGAN
 
 **Powered by Black Magic** ✨
+

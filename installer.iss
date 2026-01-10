@@ -3,7 +3,7 @@
 
 #define MyAppName "Gandalf of Technology Upscaler"
 #define MyAppVersion "1.0"
-#define MyAppPublisher "Amir"
+#define MyAppPublisher "Amir Khalid"
 #define MyAppExeName "GandalfUpscaler.exe"
 #define MyAppAssocName "Image File"
 #define MyAppAssocExt ".jpg;.png;.webp"
