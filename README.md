@@ -13,7 +13,29 @@ AI-powered image upscaling with watermark removal and film grain effects.
 
 ## Installation
 
-### Option 1: Automated Setup (Windows)
+> **Note**: This repository uses Git LFS for AI model weights. Make sure you have [Git LFS installed](https://git-lfs.github.com/) before cloning.
+
+### Quick Start (Windows)
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/ThePhenomenalOne1/GanalfsUpscaller.git
+   cd GanalfsUpscaller
+   ```
+   Model weights (~195 MB) will download automatically via Git LFS.
+
+2. **Run automated setup**
+   ```bash
+   setup.bat
+   ```
+   This creates a Python 3.9 environment, installs dependencies, and downloads Real-ESRGAN models.
+
+3. **Launch the application**
+   ```bash
+   run_gui.bat
+   ```
+
+### Manual Setup (All Platforms)
 
 1. **Clone the repository**
    ```bash
@@ -21,76 +43,39 @@ AI-powered image upscaling with watermark removal and film grain effects.
    cd GanalfsUpscaller
    ```
 
-2. **Download GFPGAN model weights** (required for face enhancement)
-   
-   Create `gfpgan/weights/` folder and download these files:
-   - [detection_Resnet50_Final.pth](https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth) (104 MB)
-   - [parsing_parsenet.pth](https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth) (81 MB)
-   
-   Place them in: `gfpgan/weights/`
-
-3. **Run setup**
-   ```bash
-   setup.bat
-   ```
-   This will:
-   - Create a Python 3.9 virtual environment
-   - Install all dependencies
-   - Download Real-ESRGAN models automatically
-
-4. **Launch the GUI**
-   ```bash
-   run_gui.bat
-   ```
-
-### Option 2: Manual Setup (All Platforms)
-
-1. **Clone and navigate**
-   ```bash
-   git clone https://github.com/ThePhenomenalOne1/GanalfsUpscaller.git
-   cd GanalfsUpscaller
-   ```
-
-2. **Download GFPGAN weights**
-   
-   Create the weights directory:
-   ```bash
-   mkdir -p gfpgan/weights
-   ```
-   
-   Download the model files:
-   - Windows: Right-click → Save as to `gfpgan/weights/`
-   - Linux/Mac: 
-     ```bash
-     cd gfpgan/weights
-     wget https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_Resnet50_Final.pth
-     wget https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth
-     cd ../..
-     ```
-
-3. **Create virtual environment**
-   ```bash
-   python -m venv env
-   ```
-
-4. **Activate environment**
+2. **Create and activate virtual environment**
    ```bash
    # Windows
+   python -m venv env
    env\Scripts\activate
    
    # Linux/Mac
+   python3 -m venv env
    source env/bin/activate
    ```
 
-5. **Install dependencies**
+3. **Install dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-6. **Run the GUI**
+4. **Run the GUI**
    ```bash
    python gui.py
    ```
+
+### Troubleshooting
+
+**Git LFS not installed?**
+- Windows: Download from [git-lfs.github.com](https://git-lfs.github.com/)
+- Linux: `sudo apt install git-lfs` or `brew install git-lfs`
+- After installing, run: `git lfs install`
+
+**Model weights missing?**
+If weights didn't download automatically:
+```bash
+git lfs pull
+```
 
 ## Requirements
 - Python 3.9+
