@@ -1,3 +1,3 @@
 @echo off
 echo Starting AI Image Upscaler GUI...
-env39_new\Scripts\python.exe gui.py
+venv\Scripts\python.exe gui.py
