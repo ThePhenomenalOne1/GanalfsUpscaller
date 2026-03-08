@@ -95,10 +95,8 @@ def download_models():
         "RealESRGAN_x2plus.pth": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
         # Specialized cartoon/illustration model
         "4x_foolhardy_Remacri.pth": "https://github.com/styler00number/Model-Zoo/releases/download/models/4x_foolhardy_Remacri.pth",
-        # Realistic models - Using GitHub mirrors for better reliability and no 401s
-        "4x-UltraSharp.pth": "https://github.com/styler00number/Model-Zoo/releases/download/models/4x-UltraSharp.pth",
-        "nomos8k_atd_jpg.pth": "https://github.com/styler00number/Model-Zoo/releases/download/models/4xNomos8k_atd_jpg.pth",
-        "RealESRGAN_x4plus_Vivid.pth": "https://github.com/styler00number/Model-Zoo/releases/download/models/RealESRGAN_x4plus_Vivid.pth",
+        # Realistic models
+        "4x-UltraSharp.pth": "https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth",
     }
     
     for model_name, url in models.items():
@@ -223,6 +221,27 @@ def load_image_robustly(path, progress_callback=None):
     return img, None
 
 
+class PreloadedRealESRGANer(RealESRGANer):
+    """
+    A modified RealESRGANer that cleanly bypasses the internal initialization.
+    The original library crashes with AttributeError on `.startswith` if model_path=None.
+    """
+    def __init__(self, scale, model, tile=0, tile_pad=10, pre_pad=10, half=False):
+        import torch
+        self.scale = scale
+        self.tile_size = tile
+        self.tile_pad = tile_pad
+        self.pre_pad = pre_pad
+        self.mod_scale = None
+        self.half = half
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        
+        self.model = model.to(self.device)
+        self.model.eval()
+        if self.half:
+            self.model = self.model.half()
+
+
 def get_upscaler(model_name: str = "RealESRGAN_x4plus", scale: int = 4, half_precision: bool = True, progress_callback=None):
     """
     Initialize the Real-ESRGAN upscaler.
@@ -265,7 +284,7 @@ def get_upscaler(model_name: str = "RealESRGAN_x4plus", scale: int = 4, half_pre
         progress_callback("Step 2/5: Configuring model architecture...")
     
     # Configure model architecture based on model type
-    is_community_model = any(name in model_name.lower() for name in ["remacri", "foolhardy", "ultrasharp", "nomos8k", "vivid"])
+    is_community_model = any(name in model_name.lower() for name in ["remacri", "foolhardy", "ultrasharp"])
     
     if "anime" in model_name.lower():
         # Anime model has different architecture
@@ -350,24 +369,33 @@ def get_upscaler(model_name: str = "RealESRGAN_x4plus", scale: int = 4, half_pre
         except RuntimeError as e:
             print(f"Strict loading failed, trying key remapping...")
             
-            # Robust key remapping for various ESRGAN formats
+            # Precise key remapping for legacy ESRGAN architectures (like 4x-UltraSharp)
             new_state_dict = {}
             for k, v in state_dict.items():
                 new_key = k
-                # 1. ESRGAN format: RRDB_trunk.X.rdb... -> body.X.rdb...
-                if k.startswith('RRDB_trunk.'):
-                    new_key = k.replace('RRDB_trunk.', 'body.')
-                # 2. model.N format -> body.N format
-                elif k.startswith('model.'):
-                    # Check if it's part of the body (layers 1 to 22 are usually RRDBs)
+                
+                # Handling RRDB blocks: model.1.sub.[block_idx].RDB[sub_idx].conv[c_idx].0.[weight|bias]
+                # -> body.[block_idx].rdb[sub_idx].conv[c_idx].[weight|bias]
+                if k.startswith('model.1.sub.'):
                     parts = k.split('.')
-                    if len(parts) > 1 and parts[1].isdigit():
-                        idx = int(parts[1])
-                        if 1 <= idx <= 22:
-                            new_key = k.replace(f'model.{idx}', f'body.{idx-1}')
-                # 3. trunk_conv -> conv_body
-                if k.startswith('trunk_conv.'):
-                    new_key = k.replace('trunk_conv.', 'conv_body.')
+                    if len(parts) >= 8 and parts[4].startswith('RDB') and parts[5].startswith('conv'):
+                        block_idx = int(parts[3])
+                        rdb_idx = parts[4].replace('RDB', 'rdb') # e.g., 'rdb1'
+                        conv_idx = parts[5] # e.g., 'conv1'
+                        wb = parts[7] # 'weight' or 'bias'
+                        new_key = f'body.{block_idx}.{rdb_idx}.{conv_idx}.{wb}'
+                    elif len(parts) == 6 and parts[3] == '23': # model.1.sub.23.weight
+                        new_key = f'conv_body.{parts[5]}'
+                elif k.startswith('model.0.'):
+                    new_key = f'conv_first.{k.split(".")[2]}'
+                elif k.startswith('model.3.'):
+                    new_key = f'conv_up1.{k.split(".")[2]}'
+                elif k.startswith('model.6.'):
+                    new_key = f'conv_up2.{k.split(".")[2]}'
+                elif k.startswith('model.8.'):
+                    new_key = f'conv_hr.{k.split(".")[2]}'
+                elif k.startswith('model.10.'):
+                    new_key = f'conv_last.{k.split(".")[2]}'
                 
                 new_state_dict[new_key] = v
             
@@ -381,11 +409,10 @@ def get_upscaler(model_name: str = "RealESRGAN_x4plus", scale: int = 4, half_pre
         if gpu_available:
             model = model.to(torch.device('cuda'))
         
-        # Use RealESRGANer but with our pre-loaded model
-        # We set model_path to None so it doesn't try to load again
-        upsampler = RealESRGANer(
+        # Use our custom RealESRGANer subclass with pre-loaded model
+        # The original class throws AttributeError on NoneType if model_path=None
+        upsampler = PreloadedRealESRGANer(
             scale=scale,
-            model_path=None,  # Optimization: skip internal load
             model=model,
             tile=tile_size,
             tile_pad=10,
@@ -715,9 +742,8 @@ Examples:
         "general": "RealESRGAN_x4plus",
         "anime": "RealESRGAN_x4plus_anime_6B",
         "cartoon": "4x_foolhardy_Remacri",
-        "realistic": "nomos8k_atd_jpg",
+        "realistic": "4x-UltraSharp",
         "crisp": "4x-UltraSharp",
-        "vivid": "RealESRGAN_x4plus_Vivid",
         "portrait": "RealESRGAN_x4plus",
         "x2plus": "RealESRGAN_x2plus"
     }

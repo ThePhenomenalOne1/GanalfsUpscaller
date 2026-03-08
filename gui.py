@@ -220,12 +220,11 @@ class ModernUpscalerGUI:
             "Cartoon/3D CG (Smooth)": "cartoon", 
             "Portrait (Face Focus)": "portrait",
             "Realistic Photo (Best Detail)": "realistic",
-            "Crisp/Sharp (No Blur)": "crisp",
-            "Vibrant Color (Punchy)": "vivid"
+            "Crisp/Sharp (No Blur)": "crisp"
         }
         
         self.model_combo = ttk.Combobox(model_frame, values=list(self.model_options.keys()), 
-                                        state="readonly", width=30)
+                                        textvariable=self.model, state="readonly", width=30)
         self.model_combo.set("General Photo (Balanced)")
         self.model_combo.pack(side=tk.LEFT, padx=(15, 0))
         
@@ -477,9 +476,8 @@ class ModernUpscalerGUI:
                 "general": "RealESRGAN_x4plus",
                 "anime": "RealESRGAN_x4plus_anime_6B",
                 "cartoon": "4x_foolhardy_Remacri",
-                "realistic": "nomos8k_atd_jpg",
+                "realistic": "4x-UltraSharp",
                 "crisp": "4x-UltraSharp",
-                "vivid": "RealESRGAN_x4plus_Vivid",
                 "portrait": "RealESRGAN_x4plus"
             }
             model_name = model_map[self.model.get()]
