@@ -58,6 +58,24 @@ def add_film_grain(image, strength=0.5):
     return noisy_image
 
 
+def apply_sharpening(image, amount=0.5):
+    """
+    Apply unsharp mask to the image to increase perceived sharpness.
+    
+    Args:
+        image: numpy array (BGR)
+        amount: sharpening strength (0.0 to 1.0)
+    """
+    if amount <= 0:
+        return image
+        
+    # Unsharp mask parameters
+    gaussian_blur = cv2.GaussianBlur(image, (0, 0), 3)
+    sharpened = cv2.addWeighted(image, 1.0 + amount, gaussian_blur, -amount, 0)
+    
+    return sharpened
+
+
 
 def download_models():
     """Download required models if not present."""
@@ -66,12 +84,21 @@ def download_models():
     models_dir = Path(__file__).parent / "models"
     models_dir.mkdir(exist_ok=True)
     
+    # Use reliable mirrors and set a User-Agent to avoid blocks
+    opener = urllib.request.build_opener()
+    opener.addheaders = [('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')]
+    urllib.request.install_opener(opener)
+    
     models = {
         "RealESRGAN_x4plus.pth": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth",
         "RealESRGAN_x4plus_anime_6B.pth": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
         "RealESRGAN_x2plus.pth": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
-        # Specialized cartoon/illustration model from OpenModelDB - highly rated for 3D cartoon upscaling
-        "4x_foolhardy_Remacri.pth": "https://huggingface.co/FacehugmanIII/4x_foolhardy_Remacri/resolve/main/4x_foolhardy_Remacri.pth",
+        # Specialized cartoon/illustration model
+        "4x_foolhardy_Remacri.pth": "https://github.com/styler00number/Model-Zoo/releases/download/models/4x_foolhardy_Remacri.pth",
+        # Realistic models - Using GitHub mirrors for better reliability and no 401s
+        "4x-UltraSharp.pth": "https://github.com/styler00number/Model-Zoo/releases/download/models/4x-UltraSharp.pth",
+        "nomos8k_atd_jpg.pth": "https://github.com/styler00number/Model-Zoo/releases/download/models/4xNomos8k_atd_jpg.pth",
+        "RealESRGAN_x4plus_Vivid.pth": "https://github.com/styler00number/Model-Zoo/releases/download/models/RealESRGAN_x4plus_Vivid.pth",
     }
     
     for model_name, url in models.items():
@@ -80,9 +107,18 @@ def download_models():
             print(f"📥 Downloading {model_name}...")
             try:
                 urllib.request.urlretrieve(url, model_path)
+                
+                # Check if we actually got a binary file by looking at its size (error pages are small)
+                if model_path.exists() and model_path.stat().st_size < 5000:
+                    print(f"❌ Downloaded file for {model_name} is too small, likely an error page.")
+                    model_path.unlink()
+                    return False
+                    
                 print(f"✅ Downloaded {model_name}")
             except Exception as e:
                 print(f"❌ Failed to download {model_name}: {e}")
+                if model_path.exists():
+                    model_path.unlink()
                 return False
     return True
 
@@ -128,6 +164,65 @@ def format_time(seconds: float) -> str:
 _model_cache = {}
 
 
+def load_image_robustly(path, progress_callback=None):
+    """
+    Load an image robustly, handling potential corruption or truncation.
+    
+    Args:
+        path: Path to the image file
+    
+    Returns:
+        tuple: (numpy_image, error_message)
+    """
+    path_str = str(path)
+    
+    # Check if file exists and has content
+    if not os.path.exists(path_str):
+        return None, f"File not found: {path_str}"
+    
+    if os.path.getsize(path_str) == 0:
+        return None, "File is empty (0 bytes)"
+
+    # 1. Try validation with PIL first (best for detecting truncation/EOF)
+    try:
+        from PIL import Image, ImageFile
+        # Allow loading of truncated images if needed, but we want to know about it
+        ImageFile.LOAD_TRUNCATED_IMAGES = False 
+        
+        with Image.open(path_str) as img:
+            img.verify() # This checks for corruption without loading pixels fully
+            
+        # Re-open to actually load, as verify() can close the file/invalidate the object
+        with Image.open(path_str) as img:
+            img.load() # Force pixel loading to check for decompression errors
+            
+    except (IOError, EOFError, ValueError) as e:
+        error_msg = str(e)
+        if "unexpected EOF" in error_msg.lower() or "truncated" in error_msg.lower():
+            return None, f"Image file is corrupted or truncated: {error_msg}"
+        return None, f"Failed to validate image with PIL: {error_msg}"
+    except Exception as e:
+        return None, f"Unexpected error validating image: {e}"
+
+    # 2. Try loading with OpenCV (standard for this upscaler)
+    img = cv2.imread(path_str, cv2.IMREAD_UNCHANGED)
+    
+    if img is None:
+        # Fallback: Load with PIL and convert to OpenCV format
+        try:
+            with Image.open(path_str) as pil_img:
+                # Convert to RGB then BGR
+                if pil_img.mode != 'RGB':
+                    pil_img = pil_img.convert('RGB')
+                img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+                if progress_callback:
+                    progress_callback("Loaded via PIL fallback")
+        except Exception as e:
+            return None, f"OpenCV failed and PIL fallback also failed: {e}"
+
+    return img, None
+
+
 def get_upscaler(model_name: str = "RealESRGAN_x4plus", scale: int = 4, half_precision: bool = True, progress_callback=None):
     """
     Initialize the Real-ESRGAN upscaler.
@@ -158,24 +253,28 @@ def get_upscaler(model_name: str = "RealESRGAN_x4plus", scale: int = 4, half_pre
     if not model_path.exists():
         if progress_callback:
             progress_callback("Downloading model (may take a few minutes)...")
-        print("Models not found. Downloading...")
-        download_models()
+        print("Models not found. Attempting to download...")
+        if not download_models():
+            raise FileNotFoundError(f"Missing model file: {model_name}.pth. The automatic download failed. Please check your internet connection or download it manually into the 'models' folder.")
+    
+    # Final check
+    if not model_path.exists():
+         raise FileNotFoundError(f"Missing model file: {model_name}.pth after download attempt.")
     
     if progress_callback:
         progress_callback("Step 2/5: Configuring model architecture...")
     
     # Configure model architecture based on model type
+    is_community_model = any(name in model_name.lower() for name in ["remacri", "foolhardy", "ultrasharp", "nomos8k", "vivid"])
+    
     if "anime" in model_name.lower():
         # Anime model has different architecture
         model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=6, num_grow_ch=32, scale=4)
     elif "x2plus" in model_name.lower():
         model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=2)
         scale = 2
-    elif "remacri" in model_name.lower() or "foolhardy" in model_name.lower():
-        # 4x_foolhardy_Remacri - specialized cartoon model (RRDB 23 blocks, 4x scale)
-        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
     else:
-        # Default x4plus model
+        # Default x4plus architecture (works for most community models too)
         model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
     
     if progress_callback:
@@ -209,13 +308,13 @@ def get_upscaler(model_name: str = "RealESRGAN_x4plus", scale: int = 4, half_pre
     # Use tiling for memory-constrained processing - always use tiling to prevent OOM
     tile_size = 400  # Always use tiling for stability
     
-    # For community models (like Remacri), we need to load weights manually
+    # For community models, we need to load weights manually
     # because they use a different state dict format
-    if "remacri" in model_name.lower() or "foolhardy" in model_name.lower():
+    if is_community_model:
         import torch
         
         if progress_callback:
-            progress_callback("Loading community model (Remacri)...")
+            progress_callback(f"Loading community model ({model_name})...")
         
         # Load the state dict manually
         loadnet = torch.load(str(model_path), map_location=torch.device('cpu'), weights_only=False)
@@ -249,128 +348,50 @@ def get_upscaler(model_name: str = "RealESRGAN_x4plus", scale: int = 4, half_pre
             model.load_state_dict(state_dict, strict=True)
             print("Loaded model with strict=True")
         except RuntimeError as e:
-            print(f"Strict loading failed: {e}")
-            print("Trying non-strict loading...")
+            print(f"Strict loading failed, trying key remapping...")
             
-            # Try non-strict loading
+            # Robust key remapping for various ESRGAN formats
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                new_key = k
+                # 1. ESRGAN format: RRDB_trunk.X.rdb... -> body.X.rdb...
+                if k.startswith('RRDB_trunk.'):
+                    new_key = k.replace('RRDB_trunk.', 'body.')
+                # 2. model.N format -> body.N format
+                elif k.startswith('model.'):
+                    # Check if it's part of the body (layers 1 to 22 are usually RRDBs)
+                    parts = k.split('.')
+                    if len(parts) > 1 and parts[1].isdigit():
+                        idx = int(parts[1])
+                        if 1 <= idx <= 22:
+                            new_key = k.replace(f'model.{idx}', f'body.{idx-1}')
+                # 3. trunk_conv -> conv_body
+                if k.startswith('trunk_conv.'):
+                    new_key = k.replace('trunk_conv.', 'conv_body.')
+                
+                new_state_dict[new_key] = v
+            
             try:
-                model.load_state_dict(state_dict, strict=False)
-                print("Loaded model with strict=False (some keys may be missing)")
-            except RuntimeError as e2:
-                print(f"Non-strict loading also failed: {e2}")
-                
-                # Try key remapping for ESRGAN -> Real-ESRGAN format
-                print("Trying key remapping...")
-                new_state_dict = {}
-                for k, v in state_dict.items():
-                    # Common remappings
-                    new_key = k
-                    # ESRGAN format: RRDB_trunk.X.rdb... -> body.X.rdb...
-                    if k.startswith('RRDB_trunk.'):
-                        new_key = k.replace('RRDB_trunk.', 'body.')
-                    # trunk_conv -> conv_body
-                    if k.startswith('trunk_conv.'):
-                        new_key = k.replace('trunk_conv.', 'conv_body.')
-                    new_state_dict[new_key] = v
-                
-                try:
-                    model.load_state_dict(new_state_dict, strict=False)
-                    print("Loaded model with key remapping")
-                except Exception as e3:
-                    raise RuntimeError(f"Failed to load Remacri model: {e3}")
+                model.load_state_dict(new_state_dict, strict=False)
+                print("Loaded model with key remapping (strict=False)")
+            except Exception as e3:
+                raise RuntimeError(f"Failed to load community model weights: {e3}")
         
         model.eval()
-        
         if gpu_available:
             model = model.to(torch.device('cuda'))
         
-        # Create a minimal RealESRGANer without loading (we already loaded)
-        # We need to monkey-patch to avoid the internal load
-        class PreloadedUpsampler:
-            def __init__(self, model, scale, tile, tile_pad, pre_pad, half, device):
-                self.model = model
-                self.scale = scale
-                self.tile = tile
-                self.tile_pad = tile_pad
-                self.pre_pad = pre_pad
-                self.half = half
-                self.device = device
-                if self.half:
-                    self.model = self.model.half()
-            
-            def enhance(self, img, outscale=None):
-                import torch
-                import numpy as np
-                
-                if outscale is None:
-                    outscale = self.scale
-                
-                # Convert to tensor
-                img = img.astype(np.float32) / 255.0
-                if img.ndim == 2:
-                    img = np.stack([img] * 3, axis=-1)
-                if img.shape[2] == 4:
-                    img = img[:, :, :3]
-                
-                img = torch.from_numpy(np.transpose(img, (2, 0, 1))).float()
-                img = img.unsqueeze(0).to(self.device)
-                
-                if self.half:
-                    img = img.half()
-                
-                # Process with tiling if needed
-                with torch.no_grad():
-                    if self.tile > 0:
-                        output = self._tile_process(img)
-                    else:
-                        output = self.model(img)
-                
-                # Convert back
-                output = output.squeeze(0).float().cpu().clamp_(0, 1).numpy()
-                output = np.transpose(output, (1, 2, 0))
-                output = (output * 255.0).round().astype(np.uint8)
-                
-                return output, None
-            
-            def _tile_process(self, img):
-                import torch
-                batch, channel, height, width = img.shape
-                output_height = height * self.scale
-                output_width = width * self.scale
-                output = img.new_zeros((batch, channel, output_height, output_width))
-                
-                tiles_x = (width + self.tile - 1) // self.tile
-                tiles_y = (height + self.tile - 1) // self.tile
-                
-                for y in range(tiles_y):
-                    for x in range(tiles_x):
-                        tile_idx = y * tiles_x + x + 1
-                        print(f"        Tile {tile_idx}/{tiles_x * tiles_y}")
-                        
-                        ofs_x = x * self.tile
-                        ofs_y = y * self.tile
-                        
-                        input_start_x = ofs_x
-                        input_end_x = min(ofs_x + self.tile, width)
-                        input_start_y = ofs_y
-                        input_end_y = min(ofs_y + self.tile, height)
-                        
-                        input_tile = img[:, :, input_start_y:input_end_y, input_start_x:input_end_x]
-                        
-                        with torch.no_grad():
-                            output_tile = self.model(input_tile)
-                        
-                        output_start_x = input_start_x * self.scale
-                        output_end_x = input_end_x * self.scale
-                        output_start_y = input_start_y * self.scale
-                        output_end_y = input_end_y * self.scale
-                        
-                        output[:, :, output_start_y:output_end_y, output_start_x:output_end_x] = output_tile
-                
-                return output
-        
-        device = torch.device('cuda' if gpu_available else 'cpu')
-        upsampler = PreloadedUpsampler(model, scale, tile_size, 10, 0, half_precision and gpu_available, device)
+        # Use RealESRGANer but with our pre-loaded model
+        # We set model_path to None so it doesn't try to load again
+        upsampler = RealESRGANer(
+            scale=scale,
+            model_path=None,  # Optimization: skip internal load
+            model=model,
+            tile=tile_size,
+            tile_pad=10,
+            pre_pad=0,
+            half=half_precision and gpu_available
+        )
     else:
         # Standard Real-ESRGAN model loading
         upsampler = RealESRGANer(
@@ -404,7 +425,8 @@ def upscale_image(
     suffix: str = "_upscaled",
     preserve_metadata: bool = True,
     remove_watermark: bool = False,
-    grain_strength: float = 0.0
+    grain_strength: float = 0.0,
+    sharpen_amount: float = 0.0
 ) -> str:
     """
     Upscale a single image.
@@ -438,10 +460,13 @@ def upscale_image(
     
     print(f"🖼️  Processing: {input_path.name}")
     
-    # Read image
-    img = cv2.imread(str(input_path), cv2.IMREAD_UNCHANGED)
+    # Read image robustly
+    img, error = load_image_robustly(input_path, progress_callback=progress_callback)
+    if error:
+        raise ValueError(error)
+    
     if img is None:
-        raise ValueError(f"Failed to read image: {input_path}")
+        raise ValueError(f"Failed to read image (unknown error): {input_path}")
     
     original_size = f"{img.shape[1]}x{img.shape[0]}"
     
@@ -515,6 +540,12 @@ def upscale_image(
         output = add_film_grain(output, grain_strength)
         if progress_callback:
             progress_callback(f"Added film grain (strength: {grain_strength:.1f})")
+            
+    # Apply sharpening if requested
+    if sharpen_amount > 0:
+        output = apply_sharpening(output, sharpen_amount)
+        if progress_callback:
+            progress_callback(f"Applied sharpening (strength: {sharpen_amount:.1f})")
     
     # Convert BGR (OpenCV) to RGB (PIL)
     if len(output.shape) == 3 and output.shape[2] >= 3:
@@ -558,7 +589,8 @@ def upscale_batch(
     model_name: str = "RealESRGAN_x4plus",
     scale: int = 4,
     face_enhance: bool = False,
-    output_format: str = "png"
+    output_format: str = "png",
+    sharpen_amount: float = 0.0
 ) -> list:
     """
     Upscale all images in a directory.
@@ -612,7 +644,8 @@ def upscale_batch(
                 model_name,
                 scale,
                 face_enhance,
-                output_format
+                output_format,
+                sharpen_amount=sharpen_amount
             )
             results.append(result)
             
@@ -670,6 +703,8 @@ Examples:
                         help="Enable face enhancement (GFPGAN)")
     parser.add_argument("-f", "--format", choices=["png", "jpg", "webp"], default="png",
                         help="Output format (default: png)")
+    parser.add_argument("--sharpen", type=float, default=0.0,
+                        help="Sharpen amount (0.0 to 1.0, default: 0.0)")
     parser.add_argument("--download-models", action="store_true",
                         help="Download all models and exit")
     
@@ -679,10 +714,18 @@ Examples:
     model_map = {
         "general": "RealESRGAN_x4plus",
         "anime": "RealESRGAN_x4plus_anime_6B",
-        "cartoon": "4x_foolhardy_Remacri",  # Specialized model for 3D cartoon characters
+        "cartoon": "4x_foolhardy_Remacri",
+        "realistic": "nomos8k_atd_jpg",
+        "crisp": "4x-UltraSharp",
+        "vivid": "RealESRGAN_x4plus_Vivid",
+        "portrait": "RealESRGAN_x4plus",
         "x2plus": "RealESRGAN_x2plus"
     }
     model_name = model_map[args.model]
+    
+    # Face enhancement is auto-enabled for portrait model in CLI too
+    if args.model == "portrait":
+        args.face = True
     
     # Handle scale for x2plus model
     if args.model == "x2plus":
@@ -703,6 +746,7 @@ Examples:
     print(f"   Model: {model_name}")
     print(f"   Scale: {args.scale}x")
     print(f"   Face Enhancement: {'Enabled' if args.face else 'Disabled'}")
+    print(f"   Sharpening: {args.sharpen}")
     print("=" * 50)
     
     if input_path.is_dir():
@@ -713,7 +757,8 @@ Examples:
             model_name,
             args.scale,
             args.face,
-            args.format
+            args.format,
+            sharpen_amount=args.sharpen
         )
     elif input_path.is_file():
         # Single image
@@ -723,7 +768,8 @@ Examples:
             model_name,
             args.scale,
             args.face,
-            args.format
+            args.format,
+            sharpen_amount=args.sharpen
         )
     else:
         print(f"❌ Input not found: {input_path}")

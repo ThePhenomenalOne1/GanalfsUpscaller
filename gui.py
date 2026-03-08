@@ -55,7 +55,8 @@ class ModernUpscalerGUI:
         self.suffix = tk.StringVar(value="_upscaled")
         self.preserve_metadata = tk.BooleanVar(value=True)
         self.remove_watermark = tk.BooleanVar(value=False)
-        self.grain_strength = tk.DoubleVar(value=1.0)
+        self.grain_strength = tk.DoubleVar(value=0.0)
+        self.sharpen_amount = tk.DoubleVar(value=0.0)
         
         # Processing state
         self.is_processing = False
@@ -213,10 +214,26 @@ class ModernUpscalerGUI:
         
         ttk.Label(model_frame, text="AI Model:", style='Card.TLabel').pack(side=tk.LEFT)
         
-        models = [("Photos", "general"), ("Anime/2D", "anime"), ("Cartoon/3D", "cartoon")]
-        for text, value in models:
-            ttk.Radiobutton(model_frame, text=text, variable=self.model, value=value,
-                           style='Card.TRadiobutton').pack(side=tk.LEFT, padx=(15, 0))
+        self.model_options = {
+            "General Photo (Balanced)": "general", 
+            "Anime/Drawing (Clean)": "anime", 
+            "Cartoon/3D CG (Smooth)": "cartoon", 
+            "Portrait (Face Focus)": "portrait",
+            "Realistic Photo (Best Detail)": "realistic",
+            "Crisp/Sharp (No Blur)": "crisp",
+            "Vibrant Color (Punchy)": "vivid"
+        }
+        
+        self.model_combo = ttk.Combobox(model_frame, values=list(self.model_options.keys()), 
+                                        state="readonly", width=30)
+        self.model_combo.set("General Photo (Balanced)")
+        self.model_combo.pack(side=tk.LEFT, padx=(15, 0))
+        
+        # Link combo to self.model variable
+        def on_model_change(event):
+            selected_text = self.model_combo.get()
+            self.model.set(self.model_options[selected_text])
+        self.model_combo.bind("<<ComboboxSelected>>", on_model_change)
         
         # Scale selection
         scale_frame = ttk.Frame(settings_card, style='Card.TFrame')
@@ -280,6 +297,20 @@ class ModernUpscalerGUI:
         def update_grain_label(*args):
             self.grain_label.config(text=f"{self.grain_strength.get():.1f}")
         self.grain_strength.trace('w', update_grain_label)
+        
+        # Sharpening slider
+        sharpen_frame = ttk.Frame(settings_card, style='Card.TFrame')
+        sharpen_frame.pack(fill=tk.X, pady=(5, 0))
+        
+        ttk.Label(sharpen_frame, text="✨ Sharpening:", style='Card.TLabel').pack(side=tk.LEFT)
+        sharpen_slider = ttk.Scale(sharpen_frame, from_=0.0, to=1.0, variable=self.sharpen_amount, orient='horizontal', length=150)
+        sharpen_slider.pack(side=tk.LEFT, padx=(10, 5))
+        self.sharpen_label = ttk.Label(sharpen_frame, text="0.0", style='Card.TLabel', width=3)
+        self.sharpen_label.pack(side=tk.LEFT)
+        
+        def update_sharpen_label(*args):
+            self.sharpen_label.config(text=f"{self.sharpen_amount.get():.1f}")
+        self.sharpen_amount.trace('w', update_sharpen_label)
         
         # === RIGHT COLUMN ===
         right_col = ttk.Frame(content, style='Dark.TFrame')
@@ -445,9 +476,19 @@ class ModernUpscalerGUI:
             model_map = {
                 "general": "RealESRGAN_x4plus",
                 "anime": "RealESRGAN_x4plus_anime_6B",
-                "cartoon": "RealESRGAN_x4plus_anime_6B"
+                "cartoon": "4x_foolhardy_Remacri",
+                "realistic": "nomos8k_atd_jpg",
+                "crisp": "4x-UltraSharp",
+                "vivid": "RealESRGAN_x4plus_Vivid",
+                "portrait": "RealESRGAN_x4plus"
             }
             model_name = model_map[self.model.get()]
+            
+            # Auto-enable face enhancement for portrait model
+            face_enhance = self.face_enhance.get()
+            if self.model.get() == "portrait":
+                face_enhance = True
+                self.root.after(0, lambda: self.log_message("👤 Portrait mode: Face enhancement auto-enabled"))
             scale = self.scale.get()
             
             self.root.after(0, lambda: self.log_message("📷 Loading AI model..."))
@@ -493,14 +534,15 @@ class ModernUpscalerGUI:
                             str(out_path),
                             model_name,
                             scale,
-                            self.face_enhance.get(),
+                            face_enhance,
                             self.output_format.get(),
                             progress_callback=on_progress,
                             dpi=self.dpi.get(),
                             suffix=self.suffix.get(),
                             preserve_metadata=self.preserve_metadata.get(),
                             remove_watermark=self.remove_watermark.get(),
-                            grain_strength=self.grain_strength.get()
+                            grain_strength=self.grain_strength.get(),
+                            sharpen_amount=self.sharpen_amount.get()
                         )
                         results.append(result)
                         self.root.after(0, lambda n=img_path.name: self.log_message(f"✅ {n}"))
@@ -525,14 +567,15 @@ class ModernUpscalerGUI:
                     output_path,
                     model_name,
                     scale,
-                    self.face_enhance.get(),
+                    face_enhance,
                     self.output_format.get(),
                     progress_callback=on_progress,
                     dpi=self.dpi.get(),
                     suffix=self.suffix.get(),
                     preserve_metadata=self.preserve_metadata.get(),
                     remove_watermark=self.remove_watermark.get(),
-                    grain_strength=self.grain_strength.get()
+                    grain_strength=self.grain_strength.get(),
+                    sharpen_amount=self.sharpen_amount.get()
                 )
                 self.update_heartbeat()
                 
