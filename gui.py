@@ -52,7 +52,7 @@ class ModernUpscalerGUI:
         self.face_enhance = tk.BooleanVar(value=False)
         self.output_format = tk.StringVar(value="png")
         self.dpi = tk.IntVar(value=72)
-        self.suffix = tk.StringVar(value="_upscaled")
+        self.suffix = tk.StringVar(value="")
         self.preserve_metadata = tk.BooleanVar(value=True)
         self.remove_watermark = tk.BooleanVar(value=False)
         self.grain_strength = tk.DoubleVar(value=0.0)
@@ -268,7 +268,7 @@ class ModernUpscalerGUI:
         
         ttk.Label(suffix_frame, text="Filename Suffix:", style='Card.TLabel').pack(side=tk.LEFT)
         ttk.Entry(suffix_frame, textvariable=self.suffix, width=12).pack(side=tk.LEFT, padx=(10, 5))
-        ttk.Label(suffix_frame, text="→ image_upscaled_4x.png", 
+        ttk.Label(suffix_frame, text="→ image.png", 
                  style='Card.TLabel', foreground=self.colors['text_dim']).pack(side=tk.LEFT)
         
         # Checkboxes
@@ -525,7 +525,7 @@ class ModernUpscalerGUI:
                     
                     try:
                         out_dir = Path(output_path) if output_path else input_path / "upscaled"
-                        out_path = out_dir / f"{img_path.stem}{self.suffix.get()}_{scale}x.{self.output_format.get()}"
+                        out_path = out_dir / f"{img_path.stem}{self.suffix.get()}.{self.output_format.get()}"
                         
                         result = upscale_image(
                             str(img_path),

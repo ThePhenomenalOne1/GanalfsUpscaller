@@ -481,7 +481,7 @@ def upscale_image(
     if output_path is None:
         output_dir = input_path.parent / "upscaled"
         output_dir.mkdir(exist_ok=True)
-        output_path = output_dir / f"{input_path.stem}{suffix}_{scale}x.{output_format}"
+        output_path = output_dir / f"{input_path.stem}.{output_format}"
     
     output_path = Path(output_path)
     
@@ -664,7 +664,7 @@ def upscale_batch(
                 print(f"⚠️  Memory limit reached, waiting for cleanup...")
                 time.sleep(1)  # Brief pause for garbage collection
             
-            output_path = output_dir / f"{img_path.stem}_upscaled_{scale}x.{output_format}"
+            output_path = output_dir / f"{img_path.stem}.{output_format}"
             result = upscale_image(
                 str(img_path),
                 str(output_path),
